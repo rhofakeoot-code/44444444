@@ -16,7 +16,6 @@ const app = initializeApp(CONFIG.FIREBASE_CONFIG);
 const db = getFirestore(app);
 let allProducts = [];
 
-// دالة لإنشاء إشعارات حركية حديثة
 window.showCustomAlert = (message) => {
     const alertBox = document.createElement('div');
     alertBox.innerHTML = `<i class="fa-solid fa-circle-check" style="font-size: 1.5rem; margin-bottom: 5px;"></i><br>${message}`;
@@ -46,7 +45,7 @@ window.showCustomAlert = (message) => {
     }, 3000);
 };
 
-// === دالة لتقليص حجم الصورة مع الحفاظ على دقة 1000 بكسل وجودة 80% ===
+// === خوارزمية الضغط التكيفي (Adaptive Compression) ===
 async function compressAndEncodeImage(file) {
     if (!file) return null;
     return new Promise((resolve, reject) => {
@@ -57,7 +56,8 @@ async function compressAndEncodeImage(file) {
             img.src = event.target.result;
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 1000; 
+                // تحديد 500 بكسل لأنها تعطي وضوح ممتاز جداً على شاشات الهواتف
+                const MAX_WIDTH = 500; 
                 let scaleSize = 1;
                 if (img.width > MAX_WIDTH) {
                     scaleSize = MAX_WIDTH / img.width;
@@ -66,37 +66,24 @@ async function compressAndEncodeImage(file) {
                 canvas.height = img.height * scaleSize;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                
+                // نبدأ بجودة عالية 80%
+                let quality = 0.8;
+                let dataUrl = canvas.toDataURL('image/jpeg', quality);
+                
+                // عملية فحص ذكية:
+                // طالما أن حجم النص (الصورة) أكبر من 24 كيلوبايت، قم بتقليل الجودة
+                // هذا يضمن مساحة كافية لرفع 40-50 صورة داخل 1 ميجابايت
+                while (dataUrl.length > 24000 && quality > 0.3) {
+                    quality -= 0.1;
+                    dataUrl = canvas.toDataURL('image/jpeg', quality);
+                }
+                
                 resolve(dataUrl);
             };
         };
         reader.onerror = error => reject(error);
     });
-}
-
-// === دالة جديدة لرفع الصورة إلى موقع ImgBB ===
-async function uploadToImgBB(base64DataUrl) {
-    const IMGBB_API_KEY = "7fa910ddeffb3ce5937e0b4ff50246c8"; 
-    const base64String = base64DataUrl.split(',')[1];
-    const formData = new FormData();
-    formData.append("image", base64String);
-
-    try {
-        const response = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
-            method: "POST",
-            body: formData
-        });
-        const result = await response.json();
-        if (result.success) {
-            return result.data.url; 
-        } else {
-            console.error("خطأ من خادم ImgBB:", result);
-            return null;
-        }
-    } catch (error) {
-        console.error("حدث خطأ أثناء الاتصال بخادم الصور:", error);
-        return null; 
-    }
 }
 
 window.verifyAdmin = () => {
@@ -134,7 +121,6 @@ window.switchTab = (tabId) => {
     if(tabId === 'sales') loadSales();
 };
 
-// === دالة حفظ القسم (محدثة لدعم ImgBB) ===
 window.saveCategory = async () => {
     const id = document.getElementById('cat-id').value;
     const name = document.getElementById('cat-name').value;
@@ -142,18 +128,12 @@ window.saveCategory = async () => {
 
     if (!name) return showCustomAlert('أدخل اسم القسم');
     const btn = document.getElementById('btn-save-cat');
-    btn.innerText = 'جاري المعالجة والرفع...';
+    btn.innerText = 'جاري المعالجة...';
 
     try {
         let updateData = { name };
         if (file) {
-            const base64Data = await compressAndEncodeImage(file);
-            const imgbbUrl = await uploadToImgBB(base64Data);
-            if(imgbbUrl) {
-                updateData.image = imgbbUrl;
-            } else {
-                throw new Error('فشل رفع الصورة لـ ImgBB');
-            }
+            updateData.image = await compressAndEncodeImage(file);
         }
 
         if (id) {
@@ -208,7 +188,6 @@ window.loadCategoriesForSelect = async () => {
     });
 };
 
-// === دالة حفظ المنتج (محدثة لدعم ImgBB) ===
 window.saveProduct = async () => {
     const id = document.getElementById('prod-id').value;
     const name = document.getElementById('prod-name').value;
@@ -220,7 +199,7 @@ window.saveProduct = async () => {
     if (!name || !price) return showCustomAlert('يرجى إكمال البيانات الأساسية للمنتج');
     
     const btn = document.getElementById('btn-save-prod');
-    btn.innerText = 'جاري الحفظ والرفع لـ ImgBB...';
+    btn.innerText = 'جاري الضغط الذكي والحفظ...';
 
     try {
         let existingImages = [];
@@ -234,15 +213,10 @@ window.saveProduct = async () => {
 
         let newImages = [];
         for (let i = 0; i < files.length; i++) {
+            // نستخدم هنا خوارزمية الضغط الذكية الخاصة بنا
             const base64Data = await compressAndEncodeImage(files[i]);
-            const imgbbUrl = await uploadToImgBB(base64Data);
-
-            if (imgbbUrl) {
-                const uniqueId = 'img_' + Date.now() + '_' + i; 
-                newImages.push({ id: uniqueId, data: imgbbUrl });
-            } else {
-                showCustomAlert('تنبيه: فشل رفع إحدى الصور، يرجى التحقق من اتصالك.');
-            }
+            const uniqueId = 'img_' + Date.now() + '_' + i; 
+            newImages.push({ id: uniqueId, data: base64Data });
         }
 
         const allImages = existingImages.concat(newImages);
@@ -261,7 +235,7 @@ window.saveProduct = async () => {
             await addDoc(collection(db, "products"), { ...updateData, createdAt: serverTimestamp() });
         }
 
-        showCustomAlert('تم حفظ المنتج والصور بنجاح!'); 
+        showCustomAlert('تم حفظ المنتج بنجاح مع أقصى ضغط!'); 
         switchTab('products');
         
         document.getElementById('prod-id').value = '';
@@ -272,7 +246,7 @@ window.saveProduct = async () => {
         
         btn.innerHTML = 'حفظ المنتج <i class="fa-solid fa-save"></i>';
     } catch (e) {
-        showCustomAlert('حدث خطأ أثناء الحفظ');
+        showCustomAlert('خطأ! تم تجاوز حد 1 ميجابايت، يرجى تقليل عدد الصور قليلاً.');
         console.error(e);
         btn.innerHTML = 'حفظ المنتج <i class="fa-solid fa-save"></i>';
     }
@@ -382,21 +356,15 @@ window.removeDiscount = async (id, originalPrice) => {
     loadDiscountProducts();
 };
 
-// === دالة حفظ العرض (محدثة لدعم ImgBB) ===
 window.saveOffer = async () => {
     const files = document.getElementById('offer-img').files;
     if (files.length === 0) return showCustomAlert('اختر صور');
     const btn = document.getElementById('btn-save-offer');
-    btn.innerText = 'جاري الرفع...';
+    btn.innerText = 'جاري المعالجة...';
     try {
         for(let f of files) {
             const base64Img = await compressAndEncodeImage(f);
-            const imgbbUrl = await uploadToImgBB(base64Img);
-            if(imgbbUrl){
-                await addDoc(collection(db, "offers"), { image: imgbbUrl, createdAt: serverTimestamp() });
-            } else {
-                showCustomAlert('فشل رفع إحدى الصور لـ ImgBB');
-            }
+            await addDoc(collection(db, "offers"), { image: base64Img, createdAt: serverTimestamp() });
         }
         showCustomAlert('تم الحفظ');
         loadOffers();
@@ -420,21 +388,15 @@ window.loadOffers = async () => {
     });
 };
 
-// === دالة حفظ البنر (محدثة لدعم ImgBB) ===
 window.saveBanner = async () => {
     const files = document.getElementById('banner-img').files;
     if (files.length === 0) return showCustomAlert('اختر صور');
     const btn = document.getElementById('btn-save-banner');
-    btn.innerText = 'جاري الرفع...';
+    btn.innerText = 'جاري المعالجة...';
     try {
         for(let f of files) {
             const base64Img = await compressAndEncodeImage(f);
-            const imgbbUrl = await uploadToImgBB(base64Img);
-            if(imgbbUrl){
-                await addDoc(collection(db, "banners"), { image: imgbbUrl, createdAt: serverTimestamp() });
-            } else {
-                 showCustomAlert('فشل رفع إحدى الصور لـ ImgBB');
-            }
+            await addDoc(collection(db, "banners"), { image: base64Img, createdAt: serverTimestamp() });
         }
         showCustomAlert('تم الحفظ');
         loadBanners();
